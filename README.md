@@ -15,3 +15,14 @@
 ```
 go test ./... -v
 ```
+
+# План по добавлению к проекту функционала
+Добавить Prometheus метрики (middleware для метрик).
+
+Распределённый rate-limit через Redis или внешнее решение.
+
+Structured logging (zerolog / zap).
+
+Tracing (OpenTelemetry).
+
+Graceful shutdown (context + server.Shutdown).
