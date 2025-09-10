@@ -7,6 +7,8 @@ import (
 
 	"github.com/go-portfolio/http-middleware/internal/handlers"
 	"github.com/go-portfolio/http-middleware/internal/middleware"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // Middleware — тип функции-обёртки, которая принимает http.Handler и возвращает новый http.Handler.
@@ -32,12 +34,15 @@ func main() {
 	// Создаём новый HTTP mux (маршрутизатор).
 	mux := http.NewServeMux()
 
+	// Экспорт метрик
+	mux.Handle("/metrics", promhttp.Handler())
+
 	// Регистрируем маршрут /ping (открытый).
 	// Он оборачивается в Recovery и Logging middleware:
 	// - Recovery ловит панику и возвращает 500 в JSON.
 	// - Logging пишет в лог метод, путь, статус и время выполнения.
 	mux.Handle("/ping", Chain(http.HandlerFunc(handlers.Ping),
-		middleware.Recovery, middleware.Logging))
+		middleware.Recovery, middleware.Logging, middleware.Metrics,))
 
 	// Регистрируем маршрут /secure (защищённый).
 	// Здесь цепочка длиннее:
@@ -46,7 +51,7 @@ func main() {
 	// - Auth: проверяет заголовок Authorization (Bearer <token>).
 	// - RateLimit: ограничивает частоту запросов.
 	mux.Handle("/secure", Chain(http.HandlerFunc(handlers.Secure),
-		middleware.Recovery, middleware.Logging, middleware.Auth, middleware.RateLimit))
+		middleware.Recovery, middleware.Logging, middleware.Metrics, middleware.Auth, middleware.RateLimit))
 
 	// Запускаем сервер и логируем адрес.
 	log.Printf("listening on %s", addr)
