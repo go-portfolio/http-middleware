@@ -231,3 +231,36 @@ docker run -p 6379:6379 redis
 ```bash
 go run main.go
 ```
+
+## Пример использования middleware для защищённого маршрута
+
+```go
+mux.Handle("/secure", Chain(
+    http.HandlerFunc(handlers.Secure),
+    recovery.Recovery,   // ловим паники и возвращаем 500
+    logging.Logging,     // структурированное логирование запроса
+    metrics.Metrics,     // сбор метрик для Prometheus
+    auth.Auth,           // проверка заголовка Authorization
+    ratelimit.RateLimit, // ограничение частоты запросов по IP
+))
+```
+Пояснение порядка middleware:
+
+Recovery — первым, чтобы перехватывать любые паники и возвращать корректный HTTP-ответ.
+
+Logging — сразу после Recovery, чтобы фиксировать все запросы, включая те, где произошла ошибка.
+
+Metrics — собирает статистику по запросам.
+
+Auth — проверяет авторизацию.
+
+RateLimit — ограничивает частоту запросов.
+
+Handler (handlers.Secure) — выполняется в самом конце, когда все проверки и обёртки пройдены.
+
+## Structured Logging Middleware
+
+**Пакет:** `logging`
+
+**Описание:**  
+Middleware для структурированного логирования HTTP-запросов с использованием [`zerolog`](https://github.com/rs/zerolog). Позволяет удобно собирать логи с полями `method`, `path`, `status`, `duration`, `user_id` и другими для последующего анализа.

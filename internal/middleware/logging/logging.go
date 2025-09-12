@@ -1,37 +1,59 @@
 package logging
 
 import (
-	"log"
 	"net/http"
 	"time"
 
-	"github.com/go-portfolio/http-middleware/internal/utils"
+	"github.com/rs/zerolog/log"
 )
 
-// Logging — middleware для логирования HTTP-запросов.
-// Оно фиксирует:
-//   - метод (GET, POST и т. д.),
-//   - путь (/ping, /secure),
-//   - статус ответа (200, 401, 500 и т. д.),
-//   - время выполнения запроса.
-//
-// Логирование помогает анализировать нагрузку, отлавливать ошибки и понимать,
-// как сервер обрабатывает запросы.
+// responseWriterWrapper оборачивает http.ResponseWriter,
+// чтобы отслеживать HTTP статус.
+type responseWriterWrapper struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *responseWriterWrapper) WriteHeader(statusCode int) {
+	w.status = statusCode
+	w.ResponseWriter.WriteHeader(statusCode)
+}
+
+// Logging — middleware для структурированного логирования HTTP запросов
 func Logging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Запоминаем время начала обработки запроса.
 		start := time.Now()
 
-		// Оборачиваем ResponseWriter, чтобы иметь возможность получить статус ответа.
-		rw := utils.NewResponseWriter(w)
+		wrapper := &responseWriterWrapper{ResponseWriter: w, status: http.StatusOK}
 
-		// Передаём управление следующему handler'у.
-		next.ServeHTTP(rw, r)
+		// Перед обработкой запроса логируем базовую информацию
+		log.Info().
+			Str("method", r.Method).
+			Str("path", r.URL.Path).
+			Str("remote_addr", r.RemoteAddr).
+			Msg("incoming request")
 
-		// Считаем время обработки запроса.
-		duration := time.Since(start)
+		// Выполняем основной handler
+		next.ServeHTTP(wrapper, r)
 
-		// Логируем метод, путь, статус и время выполнения.
-		log.Printf("%s %s %d %s", r.Method, r.URL.Path, rw.Status, duration)
+		// После обработки логируем результат
+		event := log.Info().
+			Str("method", r.Method).
+			Str("path", r.URL.Path).
+			Str("remote_addr", r.RemoteAddr).
+			Int("status", wrapper.status).
+			Dur("duration", time.Since(start))
+
+		// Если есть заголовок X-User-ID (или session), добавляем в лог
+		if userID := r.Header.Get("X-User-ID"); userID != "" {
+			event = event.Str("user_id", userID)
+		}
+
+		// Логи ошибок для статусов >= 400
+		if wrapper.status >= 400 {
+			event.Msg("request completed with error")
+		} else {
+			event.Msg("request completed successfully")
+		}
 	})
 }
