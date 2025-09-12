@@ -12,6 +12,7 @@ import (
 	"github.com/go-portfolio/http-middleware/internal/middleware/logging"
 	"github.com/go-portfolio/http-middleware/internal/middleware/metrics"
 	"github.com/go-portfolio/http-middleware/internal/middleware/pagecounter"
+	"github.com/go-portfolio/http-middleware/internal/middleware/queue"
 	"github.com/go-portfolio/http-middleware/internal/middleware/ratelimit"
 	"github.com/go-portfolio/http-middleware/internal/middleware/recovery"
 	"github.com/go-portfolio/http-middleware/internal/middleware/slidingwindow"
@@ -45,6 +46,14 @@ func pageHandler(w http.ResponseWriter, r *http.Request) {
 	utils.JSON(w, http.StatusOK, map[string]interface{}{
 		"status": "page served",
 		"time":   time.Now().Format(time.RFC3339),
+	})
+}
+
+func processHandler(w http.ResponseWriter, r *http.Request) {
+	item := w.Header().Get("X-Queue-Item")
+	utils.JSON(w, http.StatusOK, map[string]string{
+		"status": "processed",
+		"task":   item,
 	})
 }
 
@@ -106,6 +115,13 @@ func main() {
 		logging.Logging,
 		metrics.Metrics,
 		pagecounter.CounterMiddleware("counter:page_view", 60), // TTL 60 секунд
+	))
+
+	mux.Handle("/process", Chain(http.HandlerFunc(processHandler),
+		recovery.Recovery,
+		logging.Logging,
+		metrics.Metrics,
+		queue.QueueMiddleware("queue:tasks", "queue:inprogress"),
 	))
 
 	// Запускаем сервер и логируем адрес.
