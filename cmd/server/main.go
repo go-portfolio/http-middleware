@@ -4,12 +4,14 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/go-portfolio/http-middleware/internal/handlers"
 	"github.com/go-portfolio/http-middleware/internal/middleware/auth"
 	"github.com/go-portfolio/http-middleware/internal/middleware/distributedlock"
 	"github.com/go-portfolio/http-middleware/internal/middleware/logging"
 	"github.com/go-portfolio/http-middleware/internal/middleware/metrics"
+	"github.com/go-portfolio/http-middleware/internal/middleware/pagecounter"
 	"github.com/go-portfolio/http-middleware/internal/middleware/ratelimit"
 	"github.com/go-portfolio/http-middleware/internal/middleware/recovery"
 	"github.com/go-portfolio/http-middleware/internal/middleware/slidingwindow"
@@ -35,6 +37,14 @@ func orderHandler(w http.ResponseWriter, r *http.Request) {
 	// Тут бизнес-логика обработки заказа
 	utils.JSON(w, http.StatusOK, map[string]string{
 		"status": "order processed",
+	})
+}
+
+// PageHandler — пример обработчика страницы
+func pageHandler(w http.ResponseWriter, r *http.Request) {
+	utils.JSON(w, http.StatusOK, map[string]interface{}{
+		"status": "page served",
+		"time":   time.Now().Format(time.RFC3339),
 	})
 }
 
@@ -89,6 +99,13 @@ func main() {
 		metrics.Metrics,
 		auth.Auth,
 		distributedlock.RedisLockMiddleware("lock:order:123", 5000), // блокировка на 5 секунд
+	))
+
+	mux.Handle("/page", Chain(http.HandlerFunc(pageHandler),
+		recovery.Recovery,
+		logging.Logging,
+		metrics.Metrics,
+		pagecounter.CounterMiddleware("counter:page_view", 60), // TTL 60 секунд
 	))
 
 	// Запускаем сервер и логируем адрес.
