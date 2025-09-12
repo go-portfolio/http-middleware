@@ -7,11 +7,13 @@ import (
 
 	"github.com/go-portfolio/http-middleware/internal/handlers"
 	"github.com/go-portfolio/http-middleware/internal/middleware/auth"
+	"github.com/go-portfolio/http-middleware/internal/middleware/distributedlock"
 	"github.com/go-portfolio/http-middleware/internal/middleware/logging"
 	"github.com/go-portfolio/http-middleware/internal/middleware/metrics"
 	"github.com/go-portfolio/http-middleware/internal/middleware/ratelimit"
 	"github.com/go-portfolio/http-middleware/internal/middleware/recovery"
 	"github.com/go-portfolio/http-middleware/internal/middleware/slidingwindow"
+	"github.com/go-portfolio/http-middleware/internal/utils"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -27,6 +29,13 @@ func Chain(h http.Handler, mws ...Middleware) http.Handler {
 		h = mws[i](h)
 	}
 	return h
+}
+
+func orderHandler(w http.ResponseWriter, r *http.Request) {
+	// Тут бизнес-логика обработки заказа
+	utils.JSON(w, http.StatusOK, map[string]string{
+		"status": "order processed",
+	})
 }
 
 func main() {
@@ -74,6 +83,13 @@ func main() {
 		slidingwindow.SlidingWindow(limit, windowMS),
 	))
 
+	mux.Handle("/order", Chain(http.HandlerFunc(orderHandler),
+		recovery.Recovery,
+		logging.Logging,
+		metrics.Metrics,
+		auth.Auth,
+		distributedlock.RedisLockMiddleware("lock:order:123", 5000), // блокировка на 5 секунд
+	))
 
 	// Запускаем сервер и логируем адрес.
 	log.Printf("listening on %s", addr)
