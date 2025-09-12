@@ -6,7 +6,11 @@ import (
 	"os"
 
 	"github.com/go-portfolio/http-middleware/internal/handlers"
-	"github.com/go-portfolio/http-middleware/internal/middleware"
+	"github.com/go-portfolio/http-middleware/internal/middleware/auth"
+	"github.com/go-portfolio/http-middleware/internal/middleware/logging"
+	"github.com/go-portfolio/http-middleware/internal/middleware/metrics"
+	"github.com/go-portfolio/http-middleware/internal/middleware/ratelimit"
+	"github.com/go-portfolio/http-middleware/internal/middleware/recovery"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -31,7 +35,7 @@ func main() {
 		addr = ":" + v
 	}
 
-	if err := middleware.InitRedis("localhost:6379", "", 0); err != nil {
+	if err := ratelimit.InitRedis("localhost:6379", "", 0); err != nil {
 		log.Fatalf("Redis init error: %v", err)
 	}
 
@@ -46,7 +50,7 @@ func main() {
 	// - Recovery ловит панику и возвращает 500 в JSON.
 	// - Logging пишет в лог метод, путь, статус и время выполнения.
 	mux.Handle("/ping", Chain(http.HandlerFunc(handlers.Ping),
-		middleware.Recovery, middleware.Logging, middleware.Metrics))
+		recovery.Recovery, logging.Logging, metrics.Metrics))
 
 	// Регистрируем маршрут /secure (защищённый).
 	// Здесь цепочка длиннее:
@@ -55,7 +59,7 @@ func main() {
 	// - Auth: проверяет заголовок Authorization (Bearer <token>).
 	// - RateLimit: ограничивает частоту запросов.
 	mux.Handle("/secure", Chain(http.HandlerFunc(handlers.Secure),
-		middleware.Recovery, middleware.Logging, middleware.Metrics, middleware.Auth, middleware.RateLimit))
+		recovery.Recovery, logging.Logging, metrics.Metrics, auth.Auth, ratelimit.RateLimit))
 
 	// Запускаем сервер и логируем адрес.
 	log.Printf("listening on %s", addr)
