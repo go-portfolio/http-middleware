@@ -17,6 +17,7 @@ import (
 	"github.com/go-portfolio/http-middleware/internal/middleware/recovery"
 	"github.com/go-portfolio/http-middleware/internal/middleware/session"
 	"github.com/go-portfolio/http-middleware/internal/middleware/slidingwindow"
+	"github.com/go-portfolio/http-middleware/internal/middleware/stateupdate"
 	"github.com/go-portfolio/http-middleware/internal/utils"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -63,6 +64,13 @@ func processHandler(w http.ResponseWriter, r *http.Request) {
 func SecureHandler(w http.ResponseWriter, r *http.Request) {
 	utils.JSON(w, http.StatusOK, map[string]string{
 		"status": "secure access granted",
+	})
+}
+
+// UpdateHandler — пример обработчика, который вызывается после обновления
+func UpdateHandler(w http.ResponseWriter, r *http.Request) {
+	utils.JSON(w, http.StatusOK, map[string]string{
+		"status": "update applied",
 	})
 }
 
@@ -137,6 +145,13 @@ func main() {
 	mux.Handle("/secure2", Chain(
 		http.HandlerFunc(SecureHandler),
 		session.SessionMiddleware(10),
+	))
+
+	// Регистрируем маршрут /update с middleware StateUpdateMiddleware
+	// Проверяем, что ключ "state:item123" имеет значение "old" и обновляем на "new"
+	mux.Handle("/update", Chain(
+		http.HandlerFunc(UpdateHandler),
+		stateupdate.StateUpdateMiddleware("state:item123", "old", "new"),
 	))
 
 	// Запускаем сервер и логируем адрес.
