@@ -15,6 +15,7 @@ import (
 	"github.com/go-portfolio/http-middleware/internal/middleware/queue"
 	"github.com/go-portfolio/http-middleware/internal/middleware/ratelimit"
 	"github.com/go-portfolio/http-middleware/internal/middleware/recovery"
+	"github.com/go-portfolio/http-middleware/internal/middleware/session"
 	"github.com/go-portfolio/http-middleware/internal/middleware/slidingwindow"
 	"github.com/go-portfolio/http-middleware/internal/utils"
 
@@ -49,11 +50,19 @@ func pageHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// очереди
 func processHandler(w http.ResponseWriter, r *http.Request) {
 	item := w.Header().Get("X-Queue-Item")
 	utils.JSON(w, http.StatusOK, map[string]string{
 		"status": "processed",
 		"task":   item,
+	})
+}
+
+// SecureHandler — пример защищённого обработчика
+func SecureHandler(w http.ResponseWriter, r *http.Request) {
+	utils.JSON(w, http.StatusOK, map[string]string{
+		"status": "secure access granted",
 	})
 }
 
@@ -122,6 +131,12 @@ func main() {
 		logging.Logging,
 		metrics.Metrics,
 		queue.QueueMiddleware("queue:tasks", "queue:inprogress"),
+	))
+
+	// Защищённый маршрут с SessionMiddleware (TTL 10 секунд)
+	mux.Handle("/secure2", Chain(
+		http.HandlerFunc(SecureHandler),
+		session.SessionMiddleware(10),
 	))
 
 	// Запускаем сервер и логируем адрес.
