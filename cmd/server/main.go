@@ -31,6 +31,10 @@ func main() {
 		addr = ":" + v
 	}
 
+	if err := middleware.InitRedis("localhost:6379", "", 0); err != nil {
+		log.Fatalf("Redis init error: %v", err)
+	}
+
 	// Создаём новый HTTP mux (маршрутизатор).
 	mux := http.NewServeMux()
 
@@ -42,7 +46,7 @@ func main() {
 	// - Recovery ловит панику и возвращает 500 в JSON.
 	// - Logging пишет в лог метод, путь, статус и время выполнения.
 	mux.Handle("/ping", Chain(http.HandlerFunc(handlers.Ping),
-		middleware.Recovery, middleware.Logging, middleware.Metrics,))
+		middleware.Recovery, middleware.Logging, middleware.Metrics))
 
 	// Регистрируем маршрут /secure (защищённый).
 	// Здесь цепочка длиннее:

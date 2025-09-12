@@ -19,5 +19,15 @@ services:
     volumes:
       - grafana-data:/var/lib/grafana
 
+  redis:
+    image: redis:7-alpine   # лёгкий образ
+    container_name: redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"         # пробрасываем порт
+    volumes:
+      - redis_data:/data    # сохраняем данные между рестартами    
+
 volumes:
   grafana-data:
+  redis_data:
