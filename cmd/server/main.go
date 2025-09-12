@@ -11,6 +11,7 @@ import (
 	"github.com/go-portfolio/http-middleware/internal/middleware/metrics"
 	"github.com/go-portfolio/http-middleware/internal/middleware/ratelimit"
 	"github.com/go-portfolio/http-middleware/internal/middleware/recovery"
+	"github.com/go-portfolio/http-middleware/internal/middleware/slidingwindow"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -60,6 +61,19 @@ func main() {
 	// - RateLimit: ограничивает частоту запросов.
 	mux.Handle("/secure", Chain(http.HandlerFunc(handlers.Secure),
 		recovery.Recovery, logging.Logging, metrics.Metrics, auth.Auth, ratelimit.RateLimit))
+
+	// Пример использования SlidingWindow middleware на /sliding
+	// Разрешаем 10 запросов на окно 1 секунда (1000 мс)
+	limit := 10
+	windowMS := int64(1000)
+	mux.Handle("/sliding", Chain(http.HandlerFunc(handlers.Secure),
+		recovery.Recovery,
+		logging.Logging,
+		metrics.Metrics,
+		auth.Auth,
+		slidingwindow.SlidingWindow(limit, windowMS),
+	))
+
 
 	// Запускаем сервер и логируем адрес.
 	log.Printf("listening on %s", addr)
