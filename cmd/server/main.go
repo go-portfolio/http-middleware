@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
@@ -20,8 +21,50 @@ import (
 	"github.com/go-portfolio/http-middleware/internal/middleware/stateupdate"
 	"github.com/go-portfolio/http-middleware/internal/utils"
 
+	promclient "github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/otel"
+	otelprom "go.opentelemetry.io/otel/exporters/prometheus"
+	"go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
 )
+
+func initProvider() (*sdktrace.TracerProvider, http.Handler, error) {
+	// --- создаём Prometheus registry ---
+	reg := promclient.NewRegistry()
+
+	// --- создаём OTel Prometheus экспортер ---
+	exporter, err := otelprom.New(otelprom.WithRegisterer(reg))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// --- подключаем метрики к OTel ---
+	meterProvider := metric.NewMeterProvider(
+		metric.WithReader(exporter),
+		metric.WithResource(resource.NewWithAttributes(
+			semconv.SchemaURL,
+			semconv.ServiceName("http-middleware-app"),
+		)),
+	)
+	otel.SetMeterProvider(meterProvider)
+
+	// --- включаем трейсинг (без экспорта наружу) ---
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithResource(resource.NewWithAttributes(
+			semconv.SchemaURL,
+			semconv.ServiceName("http-middleware-app"),
+		)),
+	)
+	otel.SetTracerProvider(tp)
+
+	// --- http.Handler для /metrics ---
+	promHandler := promhttp.HandlerFor(reg, promhttp.HandlerOpts{})
+
+	return tp, promHandler, nil
+}
 
 // Middleware — тип функции-обёртки, которая принимает http.Handler и возвращает новый http.Handler.
 // Таким образом можно строить "цепочки" middleware вокруг конечного обработчика.
@@ -75,6 +118,18 @@ func UpdateHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	// Инициализация провайдера
+	tp, metricsHandler, err := initProvider()
+	if err != nil {
+		log.Fatalf("failed to init provider: %v", err)
+	}
+	defer func() {
+		_ = tp.Shutdown(context.Background())
+	}()
+
+	// --- handler для метрик ---
+	http.Handle("/metrics", metricsHandler)
+
 	// Порт по умолчанию — 8080. Если в окружении задана переменная PORT — используем её.
 	addr := ":8080"
 	if v := os.Getenv("PORT"); v != "" {
