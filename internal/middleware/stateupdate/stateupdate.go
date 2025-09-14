@@ -4,16 +4,23 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/go-portfolio/http-middleware/internal/utils"
 	"github.com/go-redis/redis/v8"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
 )
 
 var (
 	redisClientState *redis.Client
 	ctxState         = context.Background()
+	meter            = otel.Meter("stateupdate") // создаём Meter для метрик
 
-	// Lua скрипт для атомарного обновления
+	successCounter metric.Int64Counter
+	failCounter    metric.Int64Counter
+	durationHist   metric.Float64Histogram
+
 	stateUpdateScript = redis.NewScript(`
 if redis.call("GET", KEYS[1]) == ARGV[1] then
     redis.call("SET", KEYS[1], ARGV[2])
@@ -24,7 +31,13 @@ end
 `)
 )
 
-// InitRedisState инициализирует Redis клиент для обновления состояния
+func init() {
+	// создаём метрики
+	successCounter, _ = meter.Int64Counter("stateupdate_success_total")
+	failCounter, _ = meter.Int64Counter("stateupdate_fail_total")
+	durationHist, _ = meter.Float64Histogram("stateupdate_duration_seconds")
+}
+
 func InitRedisState(addr, password string, db int) error {
 	redisClientState = redis.NewClient(&redis.Options{
 		Addr:     addr,
@@ -38,30 +51,32 @@ func InitRedisState(addr, password string, db int) error {
 	return nil
 }
 
-// StateUpdateMiddleware — middleware для атомарного обновления значения
-// key: ключ в Redis
-// expected: ожидаемое текущее значение
-// newVal: новое значение
+// StateUpdateMiddleware с метриками
 func StateUpdateMiddleware(key, expected, newVal string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Выполняем Lua скрипт для атомарного обновления
+			start := time.Now()
+
 			res, err := stateUpdateScript.Run(ctxState, redisClientState, []string{key}, expected, newVal).Result()
+			duration := time.Since(start).Seconds()
+			durationHist.Record(r.Context(), duration) // записываем время выполнения
+
 			if err != nil {
-				// fail-open: если Redis недоступен, пропускаем запрос
+				failCounter.Add(r.Context(), 1)
 				next.ServeHTTP(w, r)
 				return
 			}
 
 			success, ok := res.(int64)
 			if !ok || success == 0 {
+				failCounter.Add(r.Context(), 1)
 				utils.JSON(w, http.StatusConflict, map[string]string{
 					"error": "update failed, expected value did not match",
 				})
 				return
 			}
 
-			// Успешное обновление
+			successCounter.Add(r.Context(), 1)
 			next.ServeHTTP(w, r)
 		})
 	}
