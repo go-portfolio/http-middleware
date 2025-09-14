@@ -32,16 +32,13 @@ import (
 )
 
 func initProvider() (*sdktrace.TracerProvider, http.Handler, error) {
-	// --- создаём Prometheus registry ---
 	reg := promclient.NewRegistry()
 
-	// --- создаём OTel Prometheus экспортер ---
 	exporter, err := otelprom.New(otelprom.WithRegisterer(reg))
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// --- подключаем метрики к OTel ---
 	meterProvider := metric.NewMeterProvider(
 		metric.WithReader(exporter),
 		metric.WithResource(resource.NewWithAttributes(
@@ -51,7 +48,6 @@ func initProvider() (*sdktrace.TracerProvider, http.Handler, error) {
 	)
 	otel.SetMeterProvider(meterProvider)
 
-	// --- включаем трейсинг (без экспорта наружу) ---
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithResource(resource.NewWithAttributes(
 			semconv.SchemaURL,
@@ -60,18 +56,16 @@ func initProvider() (*sdktrace.TracerProvider, http.Handler, error) {
 	)
 	otel.SetTracerProvider(tp)
 
-	// --- http.Handler для /metrics ---
+	// Handler для /metrics
 	promHandler := promhttp.HandlerFor(reg, promhttp.HandlerOpts{})
 
 	return tp, promHandler, nil
 }
 
-// Middleware — тип функции-обёртки, которая принимает http.Handler и возвращает новый http.Handler.
-// Таким образом можно строить "цепочки" middleware вокруг конечного обработчика.
+// Middleware тип функции-обёртки
 type Middleware func(http.Handler) http.Handler
 
-// Chain — функция для последовательного оборачивания handler'а в цепочку middleware.
-// Middleware применяются справа налево (Auth → Logging → Recovery → Handler).
+// Chain оборачивает handler в цепочку middleware
 func Chain(h http.Handler, mws ...Middleware) http.Handler {
 	for i := len(mws) - 1; i >= 0; i-- {
 		h = mws[i](h)
@@ -80,13 +74,9 @@ func Chain(h http.Handler, mws ...Middleware) http.Handler {
 }
 
 func orderHandler(w http.ResponseWriter, r *http.Request) {
-	// Тут бизнес-логика обработки заказа
-	utils.JSON(w, http.StatusOK, map[string]string{
-		"status": "order processed",
-	})
+	utils.JSON(w, http.StatusOK, map[string]string{"status": "order processed"})
 }
 
-// PageHandler — пример обработчика страницы
 func pageHandler(w http.ResponseWriter, r *http.Request) {
 	utils.JSON(w, http.StatusOK, map[string]interface{}{
 		"status": "page served",
@@ -94,43 +84,26 @@ func pageHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// очереди
 func processHandler(w http.ResponseWriter, r *http.Request) {
 	item := w.Header().Get("X-Queue-Item")
-	utils.JSON(w, http.StatusOK, map[string]string{
-		"status": "processed",
-		"task":   item,
-	})
+	utils.JSON(w, http.StatusOK, map[string]string{"status": "processed", "task": item})
 }
 
-// SecureHandler — пример защищённого обработчика
 func SecureHandler(w http.ResponseWriter, r *http.Request) {
-	utils.JSON(w, http.StatusOK, map[string]string{
-		"status": "secure access granted",
-	})
+	utils.JSON(w, http.StatusOK, map[string]string{"status": "secure access granted"})
 }
 
-// UpdateHandler — пример обработчика, который вызывается после обновления
 func UpdateHandler(w http.ResponseWriter, r *http.Request) {
-	utils.JSON(w, http.StatusOK, map[string]string{
-		"status": "update applied",
-	})
+	utils.JSON(w, http.StatusOK, map[string]string{"status": "update applied"})
 }
 
 func main() {
-	// Инициализация провайдера
 	tp, metricsHandler, err := initProvider()
 	if err != nil {
 		log.Fatalf("failed to init provider: %v", err)
 	}
-	defer func() {
-		_ = tp.Shutdown(context.Background())
-	}()
+	defer func() { _ = tp.Shutdown(context.Background()) }()
 
-	// --- handler для метрик ---
-	http.Handle("/metrics", metricsHandler)
-
-	// Порт по умолчанию — 8080. Если в окружении задана переменная PORT — используем её.
 	addr := ":8080"
 	if v := os.Getenv("PORT"); v != "" {
 		addr = ":" + v
@@ -140,30 +113,23 @@ func main() {
 		log.Fatalf("Redis init error: %v", err)
 	}
 
-	// Создаём новый HTTP mux (маршрутизатор).
 	mux := http.NewServeMux()
 
-	// Экспорт метрик
-	mux.Handle("/metrics", promhttp.Handler())
+	// --- /metrics через OpenTelemetry + Prometheus
+	mux.Handle("/metrics", metricsHandler)
 
-	// Регистрируем маршрут /ping (открытый).
-	// Он оборачивается в Recovery и Logging middleware:
-	// - Recovery ловит панику и возвращает 500 в JSON.
-	// - Logging пишет в лог метод, путь, статус и время выполнения.
 	mux.Handle("/ping", Chain(http.HandlerFunc(handlers.Ping),
-		recovery.Recovery, logging.Logging, metrics.Metrics))
+		recovery.Recovery,
+		logging.Logging,
+		metrics.Metrics))
 
-	// Регистрируем маршрут /secure (защищённый).
-	// Здесь цепочка длиннее:
-	// - Recovery: ловит паники.
-	// - Logging: логирует запросы.
-	// - Auth: проверяет заголовок Authorization (Bearer <token>).
-	// - RateLimit: ограничивает частоту запросов.
 	mux.Handle("/secure", Chain(http.HandlerFunc(handlers.Secure),
-		recovery.Recovery, logging.Logging, metrics.Metrics, auth.Auth, ratelimit.RateLimit))
+		recovery.Recovery,
+		logging.Logging,
+		metrics.Metrics,
+		auth.Auth,
+		ratelimit.RateLimit))
 
-	// Пример использования SlidingWindow middleware на /sliding
-	// Разрешаем 10 запросов на окно 1 секунда (1000 мс)
 	limit := 10
 	windowMS := int64(1000)
 	mux.Handle("/sliding", Chain(http.HandlerFunc(handlers.Secure),
@@ -171,46 +137,33 @@ func main() {
 		logging.Logging,
 		metrics.Metrics,
 		auth.Auth,
-		slidingwindow.SlidingWindow(limit, windowMS),
-	))
+		slidingwindow.SlidingWindow(limit, windowMS)))
 
 	mux.Handle("/order", Chain(http.HandlerFunc(orderHandler),
 		recovery.Recovery,
 		logging.Logging,
 		metrics.Metrics,
 		auth.Auth,
-		distributedlock.RedisLockMiddleware("lock:order:123", 5000), // блокировка на 5 секунд
-	))
+		distributedlock.RedisLockMiddleware("lock:order:123", 5000)))
 
 	mux.Handle("/page", Chain(http.HandlerFunc(pageHandler),
 		recovery.Recovery,
 		logging.Logging,
 		metrics.Metrics,
-		pagecounter.CounterMiddleware("counter:page_view", 60), // TTL 60 секунд
-	))
+		pagecounter.CounterMiddleware("counter:page_view", 60)))
 
 	mux.Handle("/process", Chain(http.HandlerFunc(processHandler),
 		recovery.Recovery,
 		logging.Logging,
 		metrics.Metrics,
-		queue.QueueMiddleware("queue:tasks", "queue:inprogress"),
-	))
+		queue.QueueMiddleware("queue:tasks", "queue:inprogress")))
 
-	// Защищённый маршрут с SessionMiddleware (TTL 10 секунд)
-	mux.Handle("/secure2", Chain(
-		http.HandlerFunc(SecureHandler),
-		session.SessionMiddleware(10),
-	))
+	mux.Handle("/secure2", Chain(http.HandlerFunc(SecureHandler),
+		session.SessionMiddleware(10)))
 
-	// Регистрируем маршрут /update с middleware StateUpdateMiddleware
-	// Проверяем, что ключ "state:item123" имеет значение "old" и обновляем на "new"
-	mux.Handle("/update", Chain(
-		http.HandlerFunc(UpdateHandler),
-		stateupdate.StateUpdateMiddleware("state:item123", "old", "new"),
-	))
+	mux.Handle("/update", Chain(http.HandlerFunc(UpdateHandler),
+		stateupdate.StateUpdateMiddleware("state:item123", "old", "new")))
 
-	// Запускаем сервер и логируем адрес.
 	log.Printf("listening on %s", addr)
-	// ListenAndServe блокирует выполнение; при ошибке (например, порт занят) сервер завершится с log.Fatal.
 	log.Fatal(http.ListenAndServe(addr, mux))
 }

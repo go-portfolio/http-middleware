@@ -280,4 +280,23 @@ curl http://localhost:8080/metrics
 
 Prometheus опрашивает сервер по конфигурации `prometheus.yml`
 
+## Сбор метрик и порядок middleware
+
+Метрики собираются через `metrics.Metrics` middleware и отдаются на эндпоинт `/metrics` для Prometheus.
+
+**Важно:** порядок middleware влияет на метрики:
+
+- `metrics.Metrics` должен располагаться **после middleware**, которые могут менять результат запроса (например, `Recovery` или `Logging`).  
+- Тогда в метриках будут корректные значения статуса, длительности и ошибок.  
+- Middleware, расположенные **после `metrics.Metrics`**, не будут учитываться в метриках.  
+
+Пример правильного порядка:
+
+```go
+Chain(handler,
+    recovery.Recovery,
+    logging.Logging,
+    metrics.Metrics,
+)
+
 
