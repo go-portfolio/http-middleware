@@ -9,42 +9,42 @@ import (
 
 	"github.com/go-portfolio/http-middleware/internal/utils"
 	"github.com/go-redis/redis/v8"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
 )
 
 var (
-	// redisClientSliding — глобальный клиент Redis для Sliding Window
 	redisClientSliding *redis.Client
+	ctxSliding         = context.Background()
+	meter              = otel.Meter("slidingwindow")
 
-	// ctxSliding — контекст для операций Redis
-	ctxSliding = context.Background()
+	allowedCounter metric.Int64Counter
+	blockedCounter metric.Int64Counter
+	durationHist   metric.Float64Histogram
 
-	// Lua скрипт для скользящего окна
 	slidingWindowScript = redis.NewScript(`
-local key = KEYS[1]              -- ключ для пользователя
-local now = tonumber(ARGV[1])    -- текущее время в миллисекундах
-local window = tonumber(ARGV[2]) -- размер окна времени (мс)
-local limit = tonumber(ARGV[3])  -- максимальное количество запросов
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+local limit = tonumber(ARGV[3])
 
--- Удаляем все старые записи за пределами окна
 redis.call("ZREMRANGEBYSCORE", key, 0, now - window)
-
--- Считаем количество запросов в текущем окне
 local count = redis.call("ZCARD", key)
 if count >= limit then
-  return 0  -- лимит превышен
+  return 0
 end
-
--- Добавляем текущий запрос
 redis.call("ZADD", key, now, now)
-
--- Устанавливаем TTL на ключ
 redis.call("PEXPIRE", key, window)
-
-return 1  -- запрос разрешён
+return 1
 `)
 )
 
-// InitRedisSliding инициализирует глобальный Redis клиент для Sliding Window
+func init() {
+	allowedCounter, _ = meter.Int64Counter("slidingwindow_allowed_total")
+	blockedCounter, _ = meter.Int64Counter("slidingwindow_blocked_total")
+	durationHist, _ = meter.Float64Histogram("slidingwindow_duration_seconds")
+}
+
 func InitRedisSliding(addr, password string, db int) error {
 	redisClientSliding = redis.NewClient(&redis.Options{
 		Addr:     addr,
@@ -58,13 +58,11 @@ func InitRedisSliding(addr, password string, db int) error {
 	return nil
 }
 
-// SlidingWindow — middleware для скользящего окна
-// limit: максимальное количество запросов
-// windowMS: размер окна в миллисекундах
 func SlidingWindow(limit int, windowMS int64) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Получаем IP клиента
+			start := time.Now()
+
 			ip, _, err := net.SplitHostPort(r.RemoteAddr)
 			if err != nil {
 				ip = r.RemoteAddr
@@ -72,25 +70,25 @@ func SlidingWindow(limit int, windowMS int64) func(http.Handler) http.Handler {
 			key := "sliding_rate:" + ip
 
 			now := time.Now().UnixMilli()
-
-			// Выполняем Lua скрипт в Redis
 			res, err := slidingWindowScript.Run(ctxSliding, redisClientSliding, []string{key}, now, windowMS, limit).Result()
+			duration := time.Since(start).Seconds()
+			durationHist.Record(r.Context(), duration) // время выполнения Lua скрипта
+
 			if err != nil {
-				// fail-open: если Redis недоступен, пропускаем запрос
 				next.ServeHTTP(w, r)
 				return
 			}
 
 			allowed, ok := res.(int64)
 			if !ok || allowed == 0 {
-				// лимит превышен
+				blockedCounter.Add(r.Context(), 1) // заблокировано
 				utils.JSON(w, http.StatusTooManyRequests, map[string]string{
 					"error": "too many requests",
 				})
 				return
 			}
 
-			// запрос разрешён
+			allowedCounter.Add(r.Context(), 1) // разрешено
 			next.ServeHTTP(w, r)
 		})
 	}
