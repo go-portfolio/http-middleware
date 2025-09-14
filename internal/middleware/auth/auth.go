@@ -6,29 +6,38 @@ import (
 	"strings"
 
 	"github.com/go-portfolio/http-middleware/internal/utils"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
 )
 
+var (
+	meter         = otel.Meter("auth")
+	authSuccess   metric.Int64Counter
+	authFailed    metric.Int64Counter
+)
+
+func init() {
+	authSuccess, _ = meter.Int64Counter("auth_success_total")
+	authFailed, _ = meter.Int64Counter("auth_failed_total")
+}
+
 // Auth — middleware для проверки авторизации по токену.
-// Читает ожидаемый токен из переменной окружения AUTH_TOKEN.
-// Проверяет заголовок Authorization: "Bearer <token>".
-// Если токен отсутствует или неверный → возвращает 401 Unauthorized.
-// Если токен корректный → передаёт управление следующему handler'у.
+// Метрики:
+// - auth_success_total — успешные авторизации
+// - auth_failed_total — неуспешные авторизации
 func Auth(next http.Handler) http.Handler {
-	// Получаем эталонный токен из окружения (например, AUTH_TOKEN=secret123).
 	token := os.Getenv("AUTH_TOKEN")
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Извлекаем значение заголовка Authorization.
 		auth := r.Header.Get("Authorization")
 
-		// Проверяем: должен начинаться с "Bearer " и совпадать с ожидаемым токеном.
 		if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != token {
-			// Если токен неверный — возвращаем 401 с JSON-ответом.
+			authFailed.Add(r.Context(), 1)
 			utils.JSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 			return
 		}
 
-		// Если токен валиден — вызываем следующий handler.
+		authSuccess.Add(r.Context(), 1)
 		next.ServeHTTP(w, r)
 	})
 }
