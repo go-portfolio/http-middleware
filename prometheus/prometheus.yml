@@ -2,6 +2,10 @@ global:
   scrape_interval: 15s
 
 scrape_configs:
-  - job_name: 'http-middleware-app'
+  - job_name: 'http-middleware-app-localhost'
     static_configs:
-      - targets: ['host.docker.internal:8080']  
+      - targets: ['localhost:8080']
+      
+  - job_name: 'http-middleware-app-docker'
+    static_configs:
+      - targets: ['host.docker.internal:8080']

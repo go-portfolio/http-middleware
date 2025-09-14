@@ -274,4 +274,10 @@ Middleware для структурированного логирования HT
 ```bash
 curl http://localhost:8080/metrics
 
+## Сбор метрик через Prometheus
+
+Сервер автоматически собирает метрики с помощью OpenTelemetry и отдаёт их на эндпоинт `/metrics`.  
+
+Prometheus опрашивает сервер по конфигурации `prometheus.yml`
+
 
